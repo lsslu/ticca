@@ -63,7 +63,7 @@ enum CounterIcon: String, Codable, CaseIterable {
     case star = "star"
     case heart = "heart"
     case flame = "flame"
-    case bolt = "bolt"
+    case bolt = "bozlt"
     case trophy = "trophy"
     case book = "book"
 }
@@ -243,19 +243,23 @@ final class Counter {
             var startComponents = components
             startComponents.day = settlementPeriod.startDay ?? 1
             periodStart = calendar.date(from: startComponents)!
-            
-            var endComponents = components
-            if let endMonthOffset = settlementPeriod.endMonthOffset {
-                endComponents.month = (endComponents.month ?? 1) + endMonthOffset
-            }
-            endComponents.day = settlementPeriod.endDay ?? 1
-            periodEnd = calendar.date(from: endComponents)!
-            periodEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: periodEnd)!
-            
+
             while periodStart <= currentEnd {
+                // 每次循环都基于 periodStart 重新计算 periodEnd
+                var endComponents = calendar.dateComponents([.year, .month], from: periodStart)
+                endComponents.month = (endComponents.month ?? 1) + settlementPeriod.count
+                if let endMonthOffset = settlementPeriod.endMonthOffset, endMonthOffset > 0 {
+                    endComponents.month = (endComponents.month ?? 1) + endMonthOffset - 1
+                }
+                endComponents.day = settlementPeriod.endDay ?? 1
+
+                periodEnd = calendar.date(from: endComponents)!
+                periodEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: periodEnd)!
+
                 periods.append((periodStart, periodEnd))
+
+                // 移动到下一个周期的起始日期
                 periodStart = calendar.date(byAdding: .month, value: settlementPeriod.count, to: periodStart)!
-                periodEnd = calendar.date(byAdding: .month, value: settlementPeriod.count, to: periodEnd)!
             }
             
         case .year:
@@ -264,17 +268,21 @@ final class Counter {
             startComponents.month = 1
             startComponents.day = settlementPeriod.startDay ?? 1
             periodStart = calendar.date(from: startComponents)!
-            
-            var endComponents = components
-            endComponents.month = 12
-            endComponents.day = settlementPeriod.endDay ?? 31
-            periodEnd = calendar.date(from: endComponents)!
-            periodEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: periodEnd)!
-            
+
             while periodStart <= currentEnd {
+                // 每次循环都基于 periodStart 重新计算 periodEnd
+                var endComponents = DateComponents()
+                endComponents.year = calendar.component(.year, from: periodStart) + settlementPeriod.count - 1
+                endComponents.month = 12
+                endComponents.day = settlementPeriod.endDay ?? 31
+
+                periodEnd = calendar.date(from: endComponents)!
+                periodEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: periodEnd)!
+
                 periods.append((periodStart, periodEnd))
+
+                // 移动到下一个周期的起始日期
                 periodStart = calendar.date(byAdding: .year, value: settlementPeriod.count, to: periodStart)!
-                periodEnd = calendar.date(byAdding: .year, value: settlementPeriod.count, to: periodEnd)!
             }
         }
         

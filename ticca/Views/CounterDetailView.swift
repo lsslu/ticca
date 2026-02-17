@@ -19,113 +19,137 @@ struct CounterDetailView: View {
     @State private var showingDeleteAlert: Bool = false
     @State private var showingEditSheet: Bool = false
     @State private var showingLimitAlert: Bool = false
-    
+
     var body: some View {
-        VStack(spacing: 24) {
-            // 计数器信息
-            VStack(spacing: 16) {
-                Image(systemName: counter.icon.rawValue)
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
-                
-                Text(counter.name)
-                    .font(.title)
-                    .fontWeight(.bold)
-                
-                Text(counter.settlementPeriod.description)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                // 计数频次信息
-                if let freq = counter.frequency {
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock.badge.checkmark")
-                            .foregroundColor(.orange)
-                        Text(freq.description)
-                            .font(.subheadline)
-                            .foregroundColor(.orange)
-                        if let remaining = remainingCount {
-                            Text("(剩余\(remaining)次)")
-                                .font(.caption)
-                                .foregroundColor(remaining > 0 ? .green : .red)
+        ZStack {
+            // 背景色
+            Color(red: 0.95, green: 0.95, blue: 0.97)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // 自定义导航栏
+                HStack {
+                    // 返回按钮
+                    Button(action: {
+                        dismiss()
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(width: 40, height: 40)
+                            .background(Color.white)
+                            .clipShape(Circle())
+                    }
+
+                    Text(counter.name)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.black)
+
+                    Spacer()
+
+                    // 更多按钮
+                    Menu {
+                        NavigationLink(destination: HistoryListView(counter: counter)) {
+                            Label("历史记录", systemImage: "clock.arrow.circlepath")
+                        }
+
+                        Button {
+                            showingEditSheet = true
+                        } label: {
+                            Label("编辑", systemImage: "pencil")
+                        }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            showingDeleteAlert = true
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(width: 40, height: 40)
+                            .background(Color.white)
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
+
+                // 主内容卡片
+                VStack(spacing: 24) {
+                    // 图标
+                    Image(systemName: counter.icon.rawValue)
+                        .font(.system(size: 36, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(width: 80, height: 80)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+
+                    // 当前周期标签
+                    let (start, end) = counter.getCurrentPeriod()
+                    VStack(spacing: 8) {
+                        Text("当前周期")
+                            .font(.system(size: 14))
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(red: 0.95, green: 0.95, blue: 0.97))
+                            .clipShape(Capsule())
+
+                        Text(formatDateRange(start: start, end: end))
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.black)
+                    }
+
+                    // 计数数字
+                    Text("\(currentCount)")
+                        .font(.system(size: 80, weight: .bold))
+                        .foregroundColor(.black)
+
+                    // 计数频次信息
+                    if let freq = counter.frequency {
+                        HStack(spacing: 4) {
+                            if let remaining = remainingCount {
+                                Text("剩余\(remaining)次")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(remaining > 0 ? .gray : .red)
+                            }
                         }
                     }
                 }
-                
-                // 当前周期信息
-                let (start, end) = counter.getCurrentPeriod()
-                VStack(spacing: 4) {
-                    Text("当前周期")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(formatDateRange(start: start, end: end))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding()
-            
-            // 当前计数
-            VStack(spacing: 8) {
-                Text("\(currentCount)")
-                    .font(.system(size: 72))
-                    .fontWeight(.bold)
-                    .foregroundColor(.blue)
-                
-                Text("当期计数")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            // 计数按钮
-            Button(action: {
-                incrementCount()
-            }) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text(canCount ? "计数" : "已达上限")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background(canCount ? Color.blue : Color.gray)
-                .cornerRadius(12)
-            }
-            .disabled(!canCount)
-            .padding()
-        }
-        .padding()
-        .navigationTitle(counter.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    NavigationLink(destination: HistoryListView(counter: counter)) {
-                        Label("历史记录", systemImage: "clock.arrow.circlepath")
+                .padding(.vertical, 40)
+                .background(Color.white)
+                .cornerRadius(24)
+                .padding(.horizontal, 20)
+
+                Spacer()
+
+                // 计数按钮
+                Button(action: {
+                    incrementCount()
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .semibold))
+                        Text(canCount ? "记一笔" : "已达上限")
+                            .font(.system(size: 18, weight: .semibold))
                     }
-                    
-                    Button {
-                        showingEditSheet = true
-                    } label: {
-                        Label("编辑", systemImage: "pencil")
-                    }
-                    
-                    Divider()
-                    
-                    Button(role: .destructive) {
-                        showingDeleteAlert = true
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 16)
+                    .background(canCount ? Color.black : Color.gray)
+                    .clipShape(Capsule())
                 }
+                .disabled(!canCount)
+                .padding(.bottom, 40)
             }
         }
+        .navigationBarHidden(true)
         .alert("确认删除", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) { }
             Button("删除", role: .destructive) {
@@ -181,8 +205,8 @@ struct CounterDetailView: View {
     
     private func formatDateRange(start: Date, end: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return "\(formatter.string(from: start)) 至 \(formatter.string(from: end))"
+        formatter.dateFormat = "MM月dd日"
+        return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
     }
     
     private func formatDateTime(_ date: Date) -> String {
@@ -195,10 +219,10 @@ struct CounterDetailView: View {
 #Preview {
     let counter = Counter(
         name: "测试计数器",
-        icon: .clock,
+        icon: .star,
         settlementPeriod: SettlementPeriod(type: .month, count: 1, startDay: 1, endDay: 31, endMonthOffset: 0)
     )
-    return NavigationStack {
+    NavigationStack {
         CounterDetailView(counter: counter)
     }
     .modelContainer(for: Counter.self, inMemory: true)
