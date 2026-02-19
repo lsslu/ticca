@@ -28,6 +28,12 @@ struct CreateCounterView: View {
     @State private var frequencyTimeValue: Int = 1
     @State private var frequencyTimeUnit: FrequencyUnit = .day
     @State private var frequencyMaxCount: Int = 1
+
+    // 提醒配置
+    @State private var reminderConfig: ReminderConfig? = nil
+    @State private var showingPermissionRequest = false
+    @State private var showingTimePicker = false
+    @State private var showingLocationPicker = false
     
     let iconColumns = [
         GridItem(.flexible()),
@@ -166,6 +172,12 @@ struct CreateCounterView: View {
                         }
                     }
                 }
+
+                ReminderConfigView(
+                    reminderConfig: $reminderConfig,
+                    onAddTimeReminder: { showingTimePicker = true },
+                    onAddLocationReminder: { showingLocationPicker = true }
+                )
             }
             .navigationTitle(isEditMode ? "编辑计数器" : "创建计数器")
             .navigationBarTitleDisplayMode(.inline)
@@ -189,7 +201,31 @@ struct CreateCounterView: View {
             .onAppear {
                 loadCounterData()
             }
+            .sheet(isPresented: $showingTimePicker) {
+                TimeReminderPickerView { reminder in
+                    addTimeReminder(reminder)
+                }
+            }
+            .sheet(isPresented: $showingLocationPicker) {
+                LocationReminderPickerView { reminder in
+                    addLocationReminder(reminder)
+                }
+            }
         }
+    }
+
+    private func addTimeReminder(_ reminder: TimeReminder) {
+        if reminderConfig == nil {
+            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
+        }
+        reminderConfig?.timeReminders.append(reminder)
+    }
+
+    private func addLocationReminder(_ reminder: LocationReminder) {
+        if reminderConfig == nil {
+            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
+        }
+        reminderConfig?.locationReminders.append(reminder)
     }
     
     private func loadCounterData() {
@@ -209,6 +245,8 @@ struct CreateCounterView: View {
         } else {
             enableFrequency = false
         }
+
+        reminderConfig = counter.reminderConfig
     }
     
     private func createCounter() {
@@ -233,10 +271,18 @@ struct CreateCounterView: View {
             name: name,
             icon: selectedIcon,
             settlementPeriod: settlementPeriod,
-            frequency: frequency
+            frequency: frequency,
+            reminderConfig: reminderConfig
         )
-        
+
         modelContext.insert(counter)
+
+        if reminderConfig != nil {
+            Task {
+                await ReminderManager.shared.setupReminders(for: counter)
+            }
+        }
+
         dismiss()
     }
     
@@ -262,7 +308,17 @@ struct CreateCounterView: View {
         } else {
             counter.frequency = nil
         }
-        
+
+        // 取消旧提醒，设置新提醒
+        ReminderManager.shared.cancelReminders(config: counter.reminderConfig)
+        counter.reminderConfig = reminderConfig
+
+        if reminderConfig != nil {
+            Task {
+                await ReminderManager.shared.setupReminders(for: counter)
+            }
+        }
+
         try? modelContext.save()
         dismiss()
     }

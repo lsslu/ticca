@@ -31,6 +31,53 @@ struct CountFrequency: Codable {
     }
 }
 
+// MARK: - Reminder Types
+
+enum ReminderFrequency: String, Codable, CaseIterable {
+    case daily = "每天"
+    case weekly = "每周"
+    case monthly = "每月"
+}
+
+struct TimeReminder: Codable, Hashable {
+    var hour: Int
+    var minute: Int
+    var frequency: ReminderFrequency
+    var isEnabled: Bool
+    var notificationId: String?
+
+    var description: String {
+        let timeString = String(format: "%02d:%02d", hour, minute)
+        return "\(frequency.rawValue) \(timeString)"
+    }
+}
+
+struct LocationReminder: Codable, Hashable {
+    var latitude: Double
+    var longitude: Double
+    var radius: Double = 1000
+    var locationName: String?
+    var isEnabled: Bool
+    var regionId: String?
+
+    var description: String {
+        if let name = locationName {
+            return "在「\(name)」附近"
+        }
+        return "位置提醒"
+    }
+}
+
+struct ReminderConfig: Codable, Hashable {
+    var timeReminders: [TimeReminder]
+    var locationReminders: [LocationReminder]
+
+    var hasAnyReminder: Bool {
+        return timeReminders.contains(where: { $0.isEnabled }) ||
+               locationReminders.contains(where: { $0.isEnabled })
+    }
+}
+
 struct SettlementPeriod: Codable {
     var type: PeriodType
     var count: Int  // 多少天/月/年为一个周期
@@ -74,13 +121,15 @@ final class Counter {
     var icon: CounterIcon
     var settlementPeriod: SettlementPeriod
     var frequency: CountFrequency?  // 计数频次限制（可选）
+    var reminderConfig: ReminderConfig?  // 提醒配置（可选）
     @Relationship(deleteRule: .cascade) var logs: [CounterLog] = []
-    
-    init(name: String, icon: CounterIcon, settlementPeriod: SettlementPeriod, frequency: CountFrequency? = nil) {
+
+    init(name: String, icon: CounterIcon, settlementPeriod: SettlementPeriod, frequency: CountFrequency? = nil, reminderConfig: ReminderConfig? = nil) {
         self.name = name
         self.icon = icon
         self.settlementPeriod = settlementPeriod
         self.frequency = frequency
+        self.reminderConfig = reminderConfig
     }
     
     // 获取当前周期的开始和结束日期
