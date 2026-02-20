@@ -19,6 +19,7 @@ struct CounterDetailView: View {
     @State private var showingDeleteAlert: Bool = false
     @State private var showingEditSheet: Bool = false
     @State private var showingLimitAlert: Bool = false
+    @State private var showingReminderSheet: Bool = false
 
     var body: some View {
         ZStack {
@@ -57,6 +58,12 @@ struct CounterDetailView: View {
                             showingEditSheet = true
                         } label: {
                             Label("编辑", systemImage: "pencil")
+                        }
+
+                        Button {
+                            showingReminderSheet = true
+                        } label: {
+                            Label("提醒设置", systemImage: "bell")
                         }
 
                         Divider()
@@ -161,6 +168,9 @@ struct CounterDetailView: View {
         .sheet(isPresented: $showingEditSheet) {
             CreateCounterView(editingCounter: counter)
         }
+        .sheet(isPresented: $showingReminderSheet) {
+            ReminderSettingSheet(counter: counter)
+        }
         .alert("计数频次已达上限", isPresented: $showingLimitAlert) {
             Button("确定", role: .cancel) { }
         } message: {
@@ -177,6 +187,7 @@ struct CounterDetailView: View {
     }
     
     private func deleteCounter() {
+        ReminderManager.shared.cancelReminders(config: counter.reminderConfig)
         modelContext.delete(counter)
         try? modelContext.save()
         dismiss()
@@ -213,6 +224,81 @@ struct CounterDetailView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "MM-dd HH:mm:ss"
         return formatter.string(from: date)
+    }
+}
+
+struct ReminderSettingSheet: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var counter: Counter
+
+    @State private var reminderConfig: ReminderConfig?
+    @State private var showingTimePicker = false
+    @State private var showingLocationPicker = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                ReminderConfigView(
+                    reminderConfig: $reminderConfig,
+                    onAddTimeReminder: { showingTimePicker = true },
+                    onAddLocationReminder: { showingLocationPicker = true }
+                )
+            }
+            .navigationTitle("提醒设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("保存") {
+                        saveReminders()
+                    }
+                }
+            }
+            .sheet(isPresented: $showingTimePicker) {
+                TimeReminderPickerView { reminder in
+                    addTimeReminder(reminder)
+                }
+            }
+            .sheet(isPresented: $showingLocationPicker) {
+                LocationReminderPickerView { reminder in
+                    addLocationReminder(reminder)
+                }
+            }
+        }
+        .onAppear {
+            reminderConfig = counter.reminderConfig
+        }
+    }
+
+    private func addTimeReminder(_ reminder: TimeReminder) {
+        if reminderConfig == nil {
+            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
+        }
+        reminderConfig?.timeReminders.append(reminder)
+    }
+
+    private func addLocationReminder(_ reminder: LocationReminder) {
+        if reminderConfig == nil {
+            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
+        }
+        reminderConfig?.locationReminders.append(reminder)
+    }
+
+    private func saveReminders() {
+        ReminderManager.shared.cancelReminders(config: counter.reminderConfig)
+        counter.reminderConfig = reminderConfig
+
+        if reminderConfig != nil {
+            Task {
+                await ReminderManager.shared.setupReminders(for: counter)
+            }
+        }
+
+        try? modelContext.save()
+        dismiss()
     }
 }
 

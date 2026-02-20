@@ -12,6 +12,7 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Counter.name) private var counters: [Counter]
     @State private var showCreateCounter = false
+    @State private var showingDebug = false
     
     let columns = [
         GridItem(.flexible(), spacing: 16),
@@ -32,6 +33,7 @@ struct HomeView: View {
                             Text("计数器")
                                 .font(.system(size: 32, weight: .bold))
                                 .foregroundColor(.black)
+                                .onTapGesture { showingDebug = true }
                             
                             Text("记录生活中的点滴累积")
                                 .font(.system(size: 15))
@@ -89,6 +91,9 @@ struct HomeView: View {
                 }
             }
             .navigationBarHidden(true)
+            .navigationDestination(isPresented: $showingDebug) {
+                DebugView()
+            }
             .sheet(isPresented: $showCreateCounter) {
                 CreateCounterView()
             }
