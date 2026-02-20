@@ -48,6 +48,7 @@ struct LocationReminderPickerView: View {
     @State private var searchText: String = ""
     @State private var selectedCoordinate: CLLocationCoordinate2D?
     @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var showPermissionDenied: Bool = false
 
     let onSave: (LocationReminder) -> Void
 
@@ -168,17 +169,40 @@ struct LocationReminderPickerView: View {
                 }
             }
             .onAppear {
-                if locationService.authorizationStatus == .notDetermined {
+                switch locationService.authorizationStatus {
+                case .notDetermined:
                     locationService.requestWhenInUseAuthorization()
+                case .denied, .restricted:
+                    showPermissionDenied = true
+                default:
+                    break
                 }
                 if let coordinate = selectedCoordinate {
                     cameraPosition = .camera(
-                        MapCamera(centerCoordinate: coordinate, distance: 5000)
+                        MapCamera(centerCoordinate: coordinate, distance: 12000)
                     )
                 } else {
                     cameraPosition = .userLocation(fallback: .automatic)
                     locationService.requestCurrentLocation()
                 }
+            }
+            .onChange(of: locationService.authorizationStatus) { _, newStatus in
+                if newStatus == .denied || newStatus == .restricted {
+                    showPermissionDenied = true
+                }
+            }
+            .alert("需要位置权限", isPresented: $showPermissionDenied) {
+                Button("前往设置") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                    dismiss()
+                }
+                Button("取消", role: .cancel) {
+                    dismiss()
+                }
+            } message: {
+                Text("位置提醒需要定位权限才能正常工作，请在系统设置中开启定位服务。")
             }
         }
     }
@@ -192,7 +216,7 @@ struct LocationReminderPickerView: View {
                 selectedCoordinate = item.placemark.coordinate
                 locationName = completion.title
                 cameraPosition = .camera(
-                    MapCamera(centerCoordinate: item.placemark.coordinate, distance: 5000)
+                    MapCamera(centerCoordinate: item.placemark.coordinate, distance: 12000)
                 )
                 searchText = ""
                 searchService.completions = []
@@ -207,7 +231,7 @@ struct LocationReminderPickerView: View {
             if let location = locationService.currentLocation {
                 selectedCoordinate = location.coordinate
                 cameraPosition = .camera(
-                    MapCamera(centerCoordinate: location.coordinate, distance: 5000)
+                    MapCamera(centerCoordinate: location.coordinate, distance: 12000)
                 )
             }
         }
