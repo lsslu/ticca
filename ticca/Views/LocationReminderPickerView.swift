@@ -179,7 +179,7 @@ struct LocationReminderPickerView: View {
                 }
                 if let coordinate = selectedCoordinate {
                     cameraPosition = .camera(
-                        MapCamera(centerCoordinate: coordinate, distance: 12000)
+                        MapCamera(centerCoordinate: coordinate, distance: 1500)
                     )
                 } else {
                     cameraPosition = .userLocation(fallback: .automatic)
@@ -216,7 +216,7 @@ struct LocationReminderPickerView: View {
                 selectedCoordinate = item.placemark.coordinate
                 locationName = completion.title
                 cameraPosition = .camera(
-                    MapCamera(centerCoordinate: item.placemark.coordinate, distance: 12000)
+                    MapCamera(centerCoordinate: item.placemark.coordinate, distance: 1500)
                 )
                 searchText = ""
                 searchService.completions = []
@@ -231,7 +231,7 @@ struct LocationReminderPickerView: View {
             if let location = locationService.currentLocation {
                 selectedCoordinate = location.coordinate
                 cameraPosition = .camera(
-                    MapCamera(centerCoordinate: location.coordinate, distance: 12000)
+                    MapCamera(centerCoordinate: location.coordinate, distance: 1500)
                 )
             }
         }
