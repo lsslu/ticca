@@ -59,9 +59,6 @@ struct ReminderConfigView: View {
                 }
             }
 
-            // 分隔
-            Divider()
-
             // 位置提醒
             HStack {
                 Label("位置提醒", systemImage: "location")
