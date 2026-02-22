@@ -110,7 +110,7 @@ enum CounterIcon: String, Codable, CaseIterable {
     case star = "star"
     case heart = "heart"
     case flame = "flame"
-    case bolt = "bozlt"
+    case bolt = "bolt"
     case trophy = "trophy"
     case book = "book"
 }
