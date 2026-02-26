@@ -23,6 +23,9 @@ class LocationService: NSObject, ObservableObject {
     // 存储 regionId -> counterName 的映射，用于触发通知时显示计数器名称
     private var regionCounterNames: [String: String] = [:]
 
+    // 存储 regionId -> isPaired 的映射，配对模式下进入围栏不单独触发通知
+    private var regionIsPaired: [String: Bool] = [:]
+
     private override init() {
         super.init()
         locationManager.delegate = self
@@ -39,7 +42,8 @@ class LocationService: NSObject, ObservableObject {
     }
 
     /// 开始监控地理围栏，返回 regionId
-    func monitorRegion(counterName: String, reminder: LocationReminder) -> String? {
+    /// - isPaired: 为 true 时表示处于时间+位置配对模式，进入围栏不单独发通知
+    func monitorRegion(counterName: String, reminder: LocationReminder, isPaired: Bool = false) -> String? {
         guard reminder.isEnabled else { return nil }
         guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return nil }
 
@@ -55,6 +59,7 @@ class LocationService: NSObject, ObservableObject {
         region.notifyOnExit = false
 
         regionCounterNames[regionId] = counterName
+        regionIsPaired[regionId] = isPaired
         locationManager.startMonitoring(for: region)
         return regionId
     }
@@ -64,6 +69,7 @@ class LocationService: NSObject, ObservableObject {
             locationManager.stopMonitoring(for: region)
         }
         regionCounterNames.removeValue(forKey: regionId)
+        regionIsPaired.removeValue(forKey: regionId)
     }
 
     func stopAllMonitoring(for config: ReminderConfig?) {
@@ -117,6 +123,8 @@ extension LocationService: CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         Task { @MainActor in
+            // 配对模式下，进入围栏仅保持位置数据新鲜，不单独触发通知
+            guard regionIsPaired[region.identifier] != true else { return }
             guard canTrigger(regionId: region.identifier) else { return }
             lastTriggerTimes[region.identifier] = Date()
             await sendLocationNotification(for: region)

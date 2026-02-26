@@ -44,12 +44,23 @@ struct TimeReminder: Codable, Hashable {
     var minute: Int
     var frequency: ReminderFrequency
     var isEnabled: Bool
-    var notificationId: String?
 
     var description: String {
         let timeString = String(format: "%02d:%02d", hour, minute)
         return "\(frequency.rawValue) \(timeString)"
     }
+}
+
+/// 通知触发条件：时间条件（index）+ 位置条件（index）的组合
+/// 满足任意一个条件即触发通知
+struct TriggerCondition: Codable, Hashable {
+    var id: String = UUID().uuidString
+    /// 对应 ReminderConfig.timeReminders 的下标；nil 表示仅位置条件
+    var timeReminderIndex: Int?
+    /// 对应 ReminderConfig.locationReminders 的下标；nil 表示仅时间条件
+    var locationReminderIndex: Int?
+    /// 已注册的 UNNotification ID（时间/配对条件注册后填充，仅位置条件为 nil）
+    var notificationId: String?
 }
 
 struct LocationReminder: Codable, Hashable {
@@ -71,10 +82,38 @@ struct LocationReminder: Codable, Hashable {
 struct ReminderConfig: Codable, Hashable {
     var timeReminders: [TimeReminder]
     var locationReminders: [LocationReminder]
+    /// 通知触发条件列表：由 recomputeTriggerConditions() 计算并维护
+    var triggerConditions: [TriggerCondition] = []
 
     var hasAnyReminder: Bool {
         return timeReminders.contains(where: { $0.isEnabled }) ||
                locationReminders.contains(where: { $0.isEnabled })
+    }
+
+    /// 根据已启用的时间提醒和位置提醒重新计算触发条件列表（笛卡尔积或单独条件）
+    /// 调用后 triggerConditions 中所有系统 ID（notificationId）均被清零，需重新注册
+    mutating func recomputeTriggerConditions() {
+        let enabledTimeIndices = timeReminders.indices.filter { timeReminders[$0].isEnabled }
+        let enabledLocIndices = locationReminders.indices.filter { locationReminders[$0].isEnabled }
+
+        if !enabledTimeIndices.isEmpty && !enabledLocIndices.isEmpty {
+            // 配对模式：笛卡尔积（时间 × 位置）
+            triggerConditions = enabledTimeIndices.flatMap { ti in
+                enabledLocIndices.map { li in
+                    TriggerCondition(id: UUID().uuidString, timeReminderIndex: ti, locationReminderIndex: li)
+                }
+            }
+        } else {
+            // 单独模式：各自独立触发
+            var conditions: [TriggerCondition] = []
+            conditions += enabledTimeIndices.map {
+                TriggerCondition(id: UUID().uuidString, timeReminderIndex: $0)
+            }
+            conditions += enabledLocIndices.map {
+                TriggerCondition(id: UUID().uuidString, locationReminderIndex: $0)
+            }
+            triggerConditions = conditions
+        }
     }
 }
 

@@ -46,8 +46,7 @@ struct TimeReminderPickerView: View {
                             hour: components.hour ?? 9,
                             minute: components.minute ?? 0,
                             frequency: selectedFrequency,
-                            isEnabled: true,
-                            notificationId: nil
+                            isEnabled: true
                         )
                         onSave(reminder)
                         dismiss()

@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import UserNotifications
+import CoreLocation
 
 @main
 struct ticcaApp: App {
@@ -62,7 +63,24 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        let userInfo = notification.request.content.userInfo
+
+        // 配对模式：时间提醒携带了配对的位置信息，需检查用户当前是否在指定位置
+        if let locationDicts = userInfo["pairedLocations"] as? [[String: Double]] {
+            guard let currentLocation = LocationService.shared.locationManager.location else {
+                // 无法获取当前位置时，降级为普通显示
+                completionHandler([.banner, .sound])
+                return
+            }
+            let isAtPairedLocation = locationDicts.contains { dict in
+                guard let lat = dict["lat"], let lng = dict["lng"], let radius = dict["radius"] else { return false }
+                let target = CLLocation(latitude: lat, longitude: lng)
+                return currentLocation.distance(from: target) <= radius
+            }
+            completionHandler(isAtPairedLocation ? [.banner, .sound] : [])
+        } else {
+            completionHandler([.banner, .sound])
+        }
     }
 
     // 用户点击通知时的处理
