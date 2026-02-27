@@ -23,23 +23,27 @@ class ReminderManager: ObservableObject {
         guard var config = counter.reminderConfig else { return }
 
         // 1. 取消旧提醒
-        await cancelReminders(config: counter.reminderConfig)
+        cancelReminders(config: counter.reminderConfig)
 
         // 2. 重新计算触发条件列表（笛卡尔积或单独条件）
         config.recomputeTriggerConditions()
 
         // 3. 注册所有启用的位置提醒的地理围栏
-        //    isPaired = 该位置出现在任何时间+位置配对条件中
         for i in config.locationReminders.indices {
             var reminder = config.locationReminders[i]
             if reminder.isEnabled {
                 let isPaired = config.triggerConditions.contains {
                     $0.locationReminderIndex == i && $0.timeReminderIndex != nil
                 }
+                let pairedTimeInfos = isPaired
+                    ? buildPairedTimeInfos(config: config, locationIndex: i, counterName: counter.name)
+                    : []
+
                 let regionId = locationService.monitorRegion(
                     counterName: counter.name,
                     reminder: reminder,
-                    isPaired: isPaired
+                    isPaired: isPaired,
+                    pairedTimeReminders: pairedTimeInfos
                 )
                 reminder.regionId = regionId
             } else {
@@ -48,30 +52,25 @@ class ReminderManager: ObservableObject {
             config.locationReminders[i] = reminder
         }
 
-        // 4. 遍历触发条件列表，为各条件注册系统通知
+        // 4. 遍历触发条件列表，仅为"纯时间"条件注册通知
+        //    配对条件（时间+位置）由地理围栏进入/离开事件动态管理，此处不注册
         for i in config.triggerConditions.indices {
             var condition = config.triggerConditions[i]
 
             if let ti = condition.timeReminderIndex {
-                let timeReminder = config.timeReminders[ti]
-                if let li = condition.locationReminderIndex {
-                    // 时间+位置配对条件：时间到达时检查是否在指定位置
-                    let locationReminder = config.locationReminders[li]
-                    condition.notificationId = await notificationService.scheduleTimeReminder(
-                        counterName: counter.name,
-                        reminder: timeReminder,
-                        pairedLocations: [locationReminder]
-                    )
+                if condition.locationReminderIndex != nil {
+                    // 配对条件：不在此处调度，由 LocationService 围栏事件动态管理
+                    condition.notificationId = nil
                 } else {
-                    // 仅时间条件：直接触发
+                    // 纯时间条件：直接注册
+                    let timeReminder = config.timeReminders[ti]
                     condition.notificationId = await notificationService.scheduleTimeReminder(
                         counterName: counter.name,
-                        reminder: timeReminder,
-                        pairedLocations: []
+                        reminder: timeReminder
                     )
                 }
             }
-            // 仅位置条件（timeReminderIndex == nil）：地理围栏已在步骤3注册，无需额外注册通知
+            // 纯位置条件（timeReminderIndex == nil）：地理围栏已在步骤3注册
 
             config.triggerConditions[i] = condition
         }
@@ -91,19 +90,33 @@ class ReminderManager: ObservableObject {
         for counter in counters {
             guard let config = counter.reminderConfig else { continue }
             for (i, reminder) in config.locationReminders.enumerated() where reminder.isEnabled {
-                if let regionId = reminder.regionId {
-                    let isMonitoring = locationService.locationManager.monitoredRegions.contains {
+                guard let regionId = reminder.regionId else { continue }
+
+                let isPaired = config.triggerConditions.contains {
+                    $0.locationReminderIndex == i && $0.timeReminderIndex != nil
+                }
+                let pairedTimeInfos = isPaired
+                    ? buildPairedTimeInfos(config: config, locationIndex: i, counterName: counter.name)
+                    : []
+
+                let isMonitoring = locationService.locationManager.monitoredRegions.contains {
+                    $0.identifier == regionId
+                }
+
+                if !isMonitoring {
+                    // 围栏丢失（少见），重新注册
+                    _ = locationService.monitorRegion(
+                        counterName: counter.name,
+                        reminder: reminder,
+                        isPaired: isPaired,
+                        pairedTimeReminders: pairedTimeInfos
+                    )
+                } else if isPaired {
+                    // 围栏仍在监控中，检测用户是否在围栏内以补建时间通知
+                    if let region = locationService.locationManager.monitoredRegions.first(where: {
                         $0.identifier == regionId
-                    }
-                    if !isMonitoring {
-                        let isPaired = config.triggerConditions.contains {
-                            $0.locationReminderIndex == i && $0.timeReminderIndex != nil
-                        }
-                        _ = locationService.monitorRegion(
-                            counterName: counter.name,
-                            reminder: reminder,
-                            isPaired: isPaired
-                        )
+                    }) {
+                        locationService.locationManager.requestState(for: region)
                     }
                 }
             }
@@ -117,5 +130,28 @@ class ReminderManager: ObservableObject {
         let locationGranted = locationService.authorizationStatus == .authorizedWhenInUse ||
                               locationService.authorizationStatus == .authorizedAlways
         return (notificationGranted, locationGranted)
+    }
+
+    // MARK: - Private Helpers
+
+    /// 从 ReminderConfig 中构建指定位置索引关联的配对时间提醒信息
+    private func buildPairedTimeInfos(
+        config: ReminderConfig,
+        locationIndex: Int,
+        counterName: String
+    ) -> [PairedTimeReminderInfo] {
+        let pairedConditions = config.triggerConditions.filter {
+            $0.locationReminderIndex == locationIndex && $0.timeReminderIndex != nil
+        }
+        return pairedConditions.compactMap { cond in
+            guard let ti = cond.timeReminderIndex else { return nil }
+            let tr = config.timeReminders[ti]
+            return PairedTimeReminderInfo(
+                counterName: counterName,
+                hour: tr.hour,
+                minute: tr.minute,
+                frequency: tr.frequency
+            )
+        }
     }
 }

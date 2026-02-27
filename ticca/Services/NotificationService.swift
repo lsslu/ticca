@@ -37,11 +37,9 @@ class NotificationService: NSObject, ObservableObject {
     }
 
     // 调度时间提醒，返回 notificationId
-    // pairedLocations 不为空时表示配对模式：时间到达后需检查用户是否在指定位置才发通知
     func scheduleTimeReminder(
         counterName: String,
-        reminder: TimeReminder,
-        pairedLocations: [LocationReminder] = []
+        reminder: TimeReminder
     ) async -> String? {
         guard reminder.isEnabled else { return nil }
 
@@ -49,13 +47,6 @@ class NotificationService: NSObject, ObservableObject {
         content.title = "计数提醒"
         content.body = "该为「\(counterName)」记一笔了"
         content.sound = .default
-
-        // 配对模式：将位置信息存入 userInfo，由 NotificationDelegate 在前台进行位置检查
-        if !pairedLocations.isEmpty {
-            content.userInfo = ["pairedLocations": pairedLocations.map { loc in
-                ["lat": loc.latitude, "lng": loc.longitude, "radius": loc.radius]
-            }]
-        }
 
         var dateComponents = DateComponents()
         dateComponents.hour = reminder.hour
