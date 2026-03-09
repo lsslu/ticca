@@ -41,6 +41,7 @@ class LocationService: NSObject, ObservableObject {
 
     // 持久化的围栏元数据：regionId -> GeofenceMetadata
     private static let metadataKey = "GeofenceMetadataStore"
+    var geofenceMetadata: [String: GeofenceMetadata] { metadataStore }
     private var metadataStore: [String: GeofenceMetadata] = [:] {
         didSet { persistMetadata() }
     }

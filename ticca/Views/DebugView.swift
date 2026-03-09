@@ -5,12 +5,31 @@
 
 import SwiftUI
 import UserNotifications
+import CoreLocation
+
+struct PendingNotificationInfo: Identifiable {
+    let id: String
+    let body: String
+    let dateComponents: DateComponents
+    let repeats: Bool
+}
+
+struct MonitoredRegionInfo: Identifiable {
+    let id: String
+    let center: CLLocationCoordinate2D
+    let radius: CLLocationDistance
+    let counterName: String
+    let isPaired: Bool
+    let activeNotificationCount: Int
+}
 
 struct DebugView: View {
     @State private var showingDelayPicker = false
     @State private var delaySeconds: String = "5"
     @State private var permissionStatus: String = "检查中..."
     @State private var lastResult: String?
+    @State private var pendingNotifications: [PendingNotificationInfo] = []
+    @State private var monitoredRegions: [MonitoredRegionInfo] = []
 
     var body: some View {
         Form {
@@ -56,6 +75,85 @@ struct DebugView: View {
                 }
             }
 
+            Section {
+                Button {
+                    Task { await loadDebugInfo() }
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundColor(.blue)
+                        Text("刷新触发器信息")
+                    }
+                }
+            }
+
+            Section("待触发时间通知（\(pendingNotifications.count)）") {
+                if pendingNotifications.isEmpty {
+                    Text("暂无已调度的时间通知")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(pendingNotifications) { info in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(info.body)
+                                .font(.subheadline)
+                            HStack {
+                                Text(formatDateComponents(info.dateComponents))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text(info.repeats ? "重复" : "单次")
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.1))
+                                    .foregroundColor(.blue)
+                                    .cornerRadius(4)
+                            }
+                            Text("ID: \(String(info.id.prefix(8)))…")
+                                .font(.caption2)
+                                .foregroundColor(Color(.tertiaryLabel))
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            Section("地理围栏（\(monitoredRegions.count)）") {
+                if monitoredRegions.isEmpty {
+                    Text("暂无监控中的地理围栏")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(monitoredRegions) { info in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(info.counterName)
+                                    .font(.subheadline)
+                                Spacer()
+                                Text(info.isPaired ? "配对模式" : "独立模式")
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(info.isPaired ? Color.orange.opacity(0.1) : Color.green.opacity(0.1))
+                                    .foregroundColor(info.isPaired ? .orange : .green)
+                                    .cornerRadius(4)
+                            }
+                            Text(String(format: "%.5f, %.5f  半径 %.0fm", info.center.latitude, info.center.longitude, info.radius))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if info.isPaired && info.activeNotificationCount > 0 {
+                                Text("当前活跃通知：\(info.activeNotificationCount) 条")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            }
+                            Text("ID: \(String(info.id.prefix(8)))…")
+                                .font(.caption2)
+                                .foregroundColor(Color(.tertiaryLabel))
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
             if let result = lastResult {
                 Section("结果") {
                     Text(result)
@@ -79,6 +177,7 @@ struct DebugView: View {
         }
         .task {
             await checkPermission()
+            await loadDebugInfo()
         }
     }
 
@@ -119,6 +218,49 @@ struct DebugView: View {
                 lastResult = "发送失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    private func loadDebugInfo() async {
+        // 查询待触发的时间通知
+        let requests = await UNUserNotificationCenter.current().pendingNotificationRequests()
+        pendingNotifications = requests.compactMap { request in
+            guard let trigger = request.trigger as? UNCalendarNotificationTrigger else { return nil }
+            return PendingNotificationInfo(
+                id: request.identifier,
+                body: request.content.body,
+                dateComponents: trigger.dateComponents,
+                repeats: trigger.repeats
+            )
+        }
+
+        // 查询监控中的地理围栏
+        let locationService = LocationService.shared
+        let metadata = locationService.geofenceMetadata
+        monitoredRegions = locationService.locationManager.monitoredRegions.compactMap { region in
+            guard let circle = region as? CLCircularRegion else { return nil }
+            let meta = metadata[circle.identifier]
+            return MonitoredRegionInfo(
+                id: circle.identifier,
+                center: circle.center,
+                radius: circle.radius,
+                counterName: meta?.counterName ?? "未知",
+                isPaired: meta?.isPaired ?? false,
+                activeNotificationCount: meta?.activeNotificationIds.count ?? 0
+            )
+        }
+    }
+
+    private func formatDateComponents(_ dc: DateComponents) -> String {
+        var parts: [String] = []
+        if let weekday = dc.weekday {
+            let names = ["", "周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+            parts.append(weekday < names.count ? names[weekday] : "周\(weekday)")
+        }
+        if let day = dc.day { parts.append("每月\(day)日") }
+        if let hour = dc.hour, let minute = dc.minute {
+            parts.append(String(format: "%02d:%02d", hour, minute))
+        }
+        return parts.joined(separator: " ")
     }
 
     private func triggerWithDelay(seconds: TimeInterval) {
