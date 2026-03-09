@@ -62,7 +62,7 @@ class NotificationService: NSObject, ObservableObject {
         }
 
         let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
-        let identifier = UUID().uuidString
+        let identifier = "ticca_\(counterName)_\(reminder.hour)_\(reminder.minute)_\(reminder.frequency.rawValue)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
 
         do {

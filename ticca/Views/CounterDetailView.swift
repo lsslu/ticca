@@ -288,17 +288,17 @@ struct ReminderSettingSheet: View {
     }
 
     private func saveReminders() {
-        ReminderManager.shared.cancelReminders(config: counter.reminderConfig)
-        counter.reminderConfig = reminderConfig
+        Task {
+            ReminderManager.shared.cancelReminders(config: counter.reminderConfig)
+            counter.reminderConfig = reminderConfig
 
-        if reminderConfig != nil {
-            Task {
+            if reminderConfig != nil {
                 await ReminderManager.shared.setupReminders(for: counter)
             }
-        }
 
-        try? modelContext.save()
-        dismiss()
+            try? modelContext.save()
+            dismiss()
+        }
     }
 }
 
