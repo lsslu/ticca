@@ -127,6 +127,14 @@ class LocationService: NSObject, ObservableObject {
         }
     }
 
+    func stopAllMonitoring() {
+        for region in locationManager.monitoredRegions {
+            cancelPairedTimeNotifications(for: region.identifier)
+            locationManager.stopMonitoring(for: region)
+        }
+        metadataStore.removeAll()
+    }
+
     func requestCurrentLocation() {
         locationManager.requestLocation()
     }

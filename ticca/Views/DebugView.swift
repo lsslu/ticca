@@ -87,6 +87,34 @@ struct DebugView: View {
                 }
             }
 
+            Section("重置") {
+                Button(role: .destructive) {
+                    Task {
+                        NotificationService.shared.cancelAllPendingNotifications()
+                        await loadDebugInfo()
+                        lastResult = "已清除所有时间提醒触发器"
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "bell.slash")
+                        Text("重置时间提醒触发器")
+                    }
+                }
+
+                Button(role: .destructive) {
+                    LocationService.shared.stopAllMonitoring()
+                    Task {
+                        await loadDebugInfo()
+                        lastResult = "已停止所有地理围栏监控"
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "location.slash")
+                        Text("重置地理围栏配置")
+                    }
+                }
+            }
+
             Section("待触发时间通知（\(pendingNotifications.count)）") {
                 if pendingNotifications.isEmpty {
                     Text("暂无已调度的时间通知")

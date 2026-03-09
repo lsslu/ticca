@@ -84,4 +84,8 @@ class NotificationService: NSObject, ObservableObject {
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
         }
     }
+
+    func cancelAllPendingNotifications() {
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+    }
 }
