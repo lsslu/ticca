@@ -25,7 +25,7 @@ struct CountFrequency: Codable {
     var timeValue: Int      // 每多少时间单位
     var timeUnit: FrequencyUnit  // 时间单位
     var maxCount: Int       // 最多计数次数
-    
+
     var description: String {
         return "每\(timeValue)\(timeUnit.rawValue)\(maxCount)次"
     }
@@ -37,6 +37,7 @@ enum ReminderFrequency: String, Codable, CaseIterable {
     case daily = "每天"
     case weekly = "每周"
     case monthly = "每月"
+    case once = "仅一次"
 }
 
 struct TimeReminder: Codable, Hashable {
@@ -49,18 +50,6 @@ struct TimeReminder: Codable, Hashable {
         let timeString = String(format: "%02d:%02d", hour, minute)
         return "\(frequency.rawValue) \(timeString)"
     }
-}
-
-/// 通知触发条件：时间条件（index）+ 位置条件（index）的组合
-/// 满足任意一个条件即触发通知
-struct TriggerCondition: Codable, Hashable {
-    var id: String = UUID().uuidString
-    /// 对应 ReminderConfig.timeReminders 的下标；nil 表示仅位置条件
-    var timeReminderIndex: Int?
-    /// 对应 ReminderConfig.locationReminders 的下标；nil 表示仅时间条件
-    var locationReminderIndex: Int?
-    /// 已注册的 UNNotification ID（时间/配对条件注册后填充，仅位置条件为 nil）
-    var notificationId: String?
 }
 
 struct LocationReminder: Codable, Hashable {
@@ -79,40 +68,234 @@ struct LocationReminder: Codable, Hashable {
     }
 }
 
-struct ReminderConfig: Codable, Hashable {
-    var timeReminders: [TimeReminder]
-    var locationReminders: [LocationReminder]
-    /// 通知触发条件列表：由 recomputeTriggerConditions() 计算并维护
-    var triggerConditions: [TriggerCondition] = []
+// MARK: - Unified Trigger Model (v2)
 
-    var hasAnyReminder: Bool {
-        return timeReminders.contains(where: { $0.isEnabled }) ||
-               locationReminders.contains(where: { $0.isEnabled })
+/// 时间约束。DateComponents 仅含 hour/minute/可选 weekday/day，绝对周期由 TriggerCondition.frequency 决定
+enum TimeConstraint: Codable, Hashable {
+    case none
+    case instant(at: DateComponents, windowBefore: TimeInterval, windowAfter: TimeInterval)
+    case range(from: DateComponents, to: DateComponents)
+}
+
+enum LocationConstraint: Codable, Hashable {
+    case none
+    case inside(latitude: Double, longitude: Double, radius: Double, locationName: String?)
+}
+
+enum Combinator: String, Codable, Hashable {
+    case and
+    case or
+}
+
+enum MissPolicy: String, Codable, Hashable {
+    case drop                    // 语义 A：错过即丢弃
+    case deferToNextOccurrence   // 语义 C：错过补到下一周期
+    case fireOnLateEntry         // 迟到补提醒：窗外进入立即补发
+}
+
+/// 统一触发条件（v2）：time × location × combinator × missPolicy
+struct TriggerCondition: Codable, Hashable {
+    var id: String = UUID().uuidString
+    var time: TimeConstraint
+    var location: LocationConstraint
+    var combinator: Combinator
+    var frequency: ReminderFrequency
+    var missPolicy: MissPolicy
+    var isEnabled: Bool = true
+    var expiresAt: Date?                  // once 频率下用于自动清理
+
+    // 运行时状态（持久化但不参与配置语义）
+    var pendingNotificationIds: [String] = []
+    var regionId: String?
+    var lastFiredAt: Date?
+    var consumedAt: Date?                 // once 触发后写
+
+    var isValid: Bool {
+        switch (time, location) {
+        case (.none, .none): return false
+        default: return true
+        }
     }
 
-    /// 根据已启用的时间提醒和位置提醒重新计算触发条件列表（笛卡尔积或单独条件）
-    /// 调用后 triggerConditions 中所有系统 ID（notificationId）均被清零，需重新注册
-    mutating func recomputeTriggerConditions() {
-        let enabledTimeIndices = timeReminders.indices.filter { timeReminders[$0].isEnabled }
-        let enabledLocIndices = locationReminders.indices.filter { locationReminders[$0].isEnabled }
+    /// 一行摘要，用于列表显示
+    var summary: String {
+        let t = timeSummary
+        let l = locationSummary
+        if t.isEmpty { return l }
+        if l.isEmpty { return t }
+        let sep = combinator == .and ? " + " : " 或 "
+        return "\(t)\(sep)\(l)"
+    }
 
-        if !enabledTimeIndices.isEmpty && !enabledLocIndices.isEmpty {
-            // 配对模式：笛卡尔积（时间 × 位置）
-            triggerConditions = enabledTimeIndices.flatMap { ti in
-                enabledLocIndices.map { li in
-                    TriggerCondition(id: UUID().uuidString, timeReminderIndex: ti, locationReminderIndex: li)
-                }
-            }
+    private var timeSummary: String {
+        switch time {
+        case .none:
+            return ""
+        case .instant(let dc, let before, let after):
+            let h = dc.hour ?? 0
+            let m = dc.minute ?? 0
+            let base = String(format: "%@ %02d:%02d", frequency.rawValue, h, m)
+            if before == 0 && after == 0 { return base }
+            let mins = Int(max(before, after) / 60)
+            return "\(base)±\(mins)分"
+        case .range(let from, let to):
+            let f = String(format: "%02d:%02d", from.hour ?? 0, from.minute ?? 0)
+            let t = String(format: "%02d:%02d", to.hour ?? 0, to.minute ?? 0)
+            return "\(frequency.rawValue) \(f)-\(t)"
+        }
+    }
+
+    private var locationSummary: String {
+        switch location {
+        case .none:
+            return ""
+        case .inside(_, _, _, let name):
+            if let name = name { return "在「\(name)」" }
+            return "在指定地点"
+        }
+    }
+}
+
+// MARK: - Legacy Trigger Model (v1, for migration only)
+
+/// 旧版触发条件，仅用于从旧数据格式迁移
+struct LegacyTriggerCondition: Codable {
+    var id: String
+    var timeReminderIndex: Int?
+    var locationReminderIndex: Int?
+    var notificationId: String?
+}
+
+// MARK: - ReminderConfig
+
+struct ReminderConfig: Codable, Hashable {
+    /// 真值源：统一触发条件列表
+    var triggerConditions: [TriggerCondition] = []
+    /// 素材库：UI 编辑时方便用户从最近用过的时间提醒里选
+    var timeReminders: [TimeReminder] = []
+    /// 素材库：UI 编辑时方便用户从最近用过的位置提醒里选
+    var locationReminders: [LocationReminder] = []
+    /// 格式版本号；缺失等价于 1（旧格式）
+    var v: Int = 2
+
+    var hasAnyReminder: Bool {
+        return triggerConditions.contains(where: { $0.isEnabled && $0.isValid })
+    }
+
+    init(
+        triggerConditions: [TriggerCondition] = [],
+        timeReminders: [TimeReminder] = [],
+        locationReminders: [LocationReminder] = [],
+        v: Int = 2
+    ) {
+        self.triggerConditions = triggerConditions
+        self.timeReminders = timeReminders
+        self.locationReminders = locationReminders
+        self.v = v
+    }
+
+    // MARK: Custom Decoding (双格式兼容)
+
+    private enum CodingKeys: String, CodingKey {
+        case triggerConditions, timeReminders, locationReminders, v
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let times = (try? c.decode([TimeReminder].self, forKey: .timeReminders)) ?? []
+        let locs = (try? c.decode([LocationReminder].self, forKey: .locationReminders)) ?? []
+        let version = (try? c.decode(Int.self, forKey: .v)) ?? 1
+
+        self.timeReminders = times
+        self.locationReminders = locs
+        self.v = 2  // 解码后内存中即升级到 v2，等下次写盘落盘
+
+        if version >= 2 {
+            self.triggerConditions = (try? c.decode([TriggerCondition].self, forKey: .triggerConditions)) ?? []
         } else {
-            // 单独模式：各自独立触发
-            var conditions: [TriggerCondition] = []
-            conditions += enabledTimeIndices.map {
-                TriggerCondition(id: UUID().uuidString, timeReminderIndex: $0)
+            // v1 -> v2 迁移
+            if let legacy = try? c.decode([LegacyTriggerCondition].self, forKey: .triggerConditions) {
+                self.triggerConditions = Self.migrateLegacy(legacy, times: times, locations: locs)
+            } else {
+                // 损坏数据：失败即重置
+                self.triggerConditions = []
+                self.timeReminders = []
+                self.locationReminders = []
             }
-            conditions += enabledLocIndices.map {
-                TriggerCondition(id: UUID().uuidString, locationReminderIndex: $0)
+        }
+    }
+
+    // MARK: Legacy Migration
+
+    /// 把旧格式 TriggerCondition 按设计稿迁移表映射到新结构
+    static func migrateLegacy(
+        _ legacy: [LegacyTriggerCondition],
+        times: [TimeReminder],
+        locations: [LocationReminder]
+    ) -> [TriggerCondition] {
+        return legacy.compactMap { lc -> TriggerCondition? in
+            let ti = lc.timeReminderIndex.flatMap { times.indices.contains($0) ? times[$0] : nil }
+            let li = lc.locationReminderIndex.flatMap { locations.indices.contains($0) ? locations[$0] : nil }
+
+            let timeC: TimeConstraint
+            if let tr = ti {
+                var dc = DateComponents()
+                dc.hour = tr.hour
+                dc.minute = tr.minute
+                timeC = .instant(at: dc, windowBefore: 0, windowAfter: 0)
+            } else {
+                timeC = .none
             }
-            triggerConditions = conditions
+
+            let locC: LocationConstraint
+            if let lr = li {
+                locC = .inside(
+                    latitude: lr.latitude,
+                    longitude: lr.longitude,
+                    radius: lr.radius,
+                    locationName: lr.locationName
+                )
+            } else {
+                locC = .none
+            }
+
+            switch (ti, li) {
+            case (nil, nil):
+                return nil
+            case (.some(let tr), nil):
+                // 纯时间
+                return TriggerCondition(
+                    id: lc.id,
+                    time: timeC,
+                    location: .none,
+                    combinator: .and,
+                    frequency: tr.frequency,
+                    missPolicy: .deferToNextOccurrence,
+                    isEnabled: tr.isEnabled
+                )
+            case (nil, .some(let lr)):
+                // 纯位置
+                return TriggerCondition(
+                    id: lc.id,
+                    time: .none,
+                    location: locC,
+                    combinator: .and,
+                    frequency: .daily,
+                    missPolicy: .fireOnLateEntry,
+                    isEnabled: lr.isEnabled
+                )
+            case (.some(let tr), .some(let lr)):
+                // 配对：C 语义
+                return TriggerCondition(
+                    id: lc.id,
+                    time: timeC,
+                    location: locC,
+                    combinator: .and,
+                    frequency: tr.frequency,
+                    missPolicy: .deferToNextOccurrence,
+                    isEnabled: tr.isEnabled && lr.isEnabled
+                )
+            }
         }
     }
 }
@@ -123,7 +306,7 @@ struct SettlementPeriod: Codable {
     var startDay: Int?  // 对于月/年：开始日期（日）
     var endDay: Int?    // 对于月/年：结束日期（日）
     var endMonthOffset: Int?  // 对于月：结束日期是当月(0)还是次月(1)
-    
+
     var description: String {
         if type == .day {
             return "每\(count)天"
@@ -170,93 +353,93 @@ final class Counter {
         self.frequency = frequency
         self.reminderConfig = reminderConfig
     }
-    
+
     // 获取当前周期的开始和结束日期
     func getCurrentPeriod() -> (start: Date, end: Date) {
         let calendar = Calendar.current
         let now = Date()
-        
+
         switch settlementPeriod.type {
         case .day:
             // 对于天，从今天开始，持续count天
             let start = calendar.startOfDay(for: now)
             let end = calendar.date(byAdding: .day, value: settlementPeriod.count - 1, to: start)!
             return (start, calendar.date(bySettingHour: 23, minute: 59, second: 59, of: end)!)
-            
+
         case .month:
             // 对于月，需要根据startDay计算当前所在的周期
             let nowComponents = calendar.dateComponents([.year, .month, .day], from: now)
             let currentDay = nowComponents.day ?? 1
             let startDay = settlementPeriod.startDay ?? 1
             let endDay = settlementPeriod.endDay ?? 1
-            
+
             var startComponents = DateComponents()
             startComponents.year = nowComponents.year
             startComponents.month = nowComponents.month
             startComponents.day = startDay
-            
+
             // 如果当前日期小于开始日，说明当前周期从上个月开始
             if currentDay < startDay {
                 startComponents.month = (startComponents.month ?? 1) - 1
             }
-            
+
             var start = calendar.date(from: startComponents)!
-            
+
             // 结束日期 = 开始日期 + periodCount 个月后的 endDay
             var endComponents = calendar.dateComponents([.year, .month], from: start)
             endComponents.month = (endComponents.month ?? 1) + settlementPeriod.count
             endComponents.day = endDay
-            
+
             var end = calendar.date(from: endComponents)!
             let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: end)!
-            
+
             return (start, endOfDay)
-            
+
         case .year:
             // 对于年，类似月的逻辑
             let nowComponents = calendar.dateComponents([.year, .month, .day], from: now)
             let startDay = settlementPeriod.startDay ?? 1
             let endDay = settlementPeriod.endDay ?? 31
-            
+
             var startComponents = DateComponents()
             startComponents.year = nowComponents.year
             startComponents.month = 1
             startComponents.day = startDay
-            
+
             var start = calendar.date(from: startComponents)!
-            
+
             // 如果当前日期在开始日期之前，回退到上一年
             if now < start {
                 startComponents.year = (startComponents.year ?? 0) - 1
                 start = calendar.date(from: startComponents)!
             }
-            
+
             var endComponents = DateComponents()
             endComponents.year = (calendar.component(.year, from: start)) + settlementPeriod.count - 1
             endComponents.month = 12
             endComponents.day = endDay
-            
+
             let end = calendar.date(from: endComponents)!
             let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: end)!
-            
+
             return (start, endOfDay)
         }
     }
-    
+
     // 获取当前周期的计数
     func getCurrentCount() -> Int {
         let (start, end) = getCurrentPeriod()
         return logs.filter { $0.dateTime >= start && $0.dateTime <= end }.count
     }
-    
+
     // 获取当前频次周期内的计数
     func getFrequencyCount() -> Int {
         guard let freq = frequency else { return 0 }
         let calendar = Calendar.current
         let now = Date()
-        
+
         var startDate: Date
-        
+
         switch freq.timeUnit {
         case .hour:
             // 当前小时的开始
@@ -278,54 +461,54 @@ final class Counter {
             startDate = calendar.date(from: components)!
             startDate = calendar.date(byAdding: .year, value: -(freq.timeValue - 1), to: startDate)!
         }
-        
+
         return logs.filter { $0.dateTime >= startDate && $0.dateTime <= now }.count
     }
-    
+
     // 检查是否可以计数（根据频次限制）
     func canCount() -> Bool {
         guard let freq = frequency else { return true }
         return getFrequencyCount() < freq.maxCount
     }
-    
+
     // 获取剩余可计数次数
     func getRemainingCount() -> Int? {
         guard let freq = frequency else { return nil }
         return max(0, freq.maxCount - getFrequencyCount())
     }
-    
+
     // 获取所有周期
     func getAllPeriods() -> [(start: Date, end: Date)] {
         var periods: [(start: Date, end: Date)] = []
         let calendar = Calendar.current
-        
+
         // 找到最早的日志日期
         guard let earliestLog = logs.min(by: { $0.dateTime < $1.dateTime }) else {
             // 如果没有日志，返回当前周期
             periods.append(getCurrentPeriod())
             return periods
         }
-        
+
         let earliestDate = earliestLog.dateTime
         let (currentStart, currentEnd) = getCurrentPeriod()
-        
+
         // 从最早日期开始，生成所有周期
         var periodStart = earliestDate
         var periodEnd: Date
-        
+
         switch settlementPeriod.type {
         case .day:
             periodStart = calendar.startOfDay(for: earliestDate)
             periodEnd = calendar.date(byAdding: .day, value: settlementPeriod.count - 1, to: periodStart)!
             periodEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: periodEnd)!
-            
+
             while periodStart <= currentEnd {
                 periods.append((periodStart, periodEnd))
                 periodStart = calendar.date(byAdding: .day, value: settlementPeriod.count, to: periodStart)!
                 periodEnd = calendar.date(byAdding: .day, value: settlementPeriod.count - 1, to: periodStart)!
                 periodEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: periodEnd)!
             }
-            
+
         case .month:
             let components = calendar.dateComponents([.year, .month], from: earliestDate)
             var startComponents = components
@@ -349,7 +532,7 @@ final class Counter {
                 // 移动到下一个周期的起始日期
                 periodStart = calendar.date(byAdding: .month, value: settlementPeriod.count, to: periodStart)!
             }
-            
+
         case .year:
             let components = calendar.dateComponents([.year], from: earliestDate)
             var startComponents = components
@@ -373,15 +556,15 @@ final class Counter {
                 periodStart = calendar.date(byAdding: .year, value: settlementPeriod.count, to: periodStart)!
             }
         }
-        
+
         return periods
     }
-    
+
     // 获取指定周期的计数
     func getCount(for period: (start: Date, end: Date)) -> Int {
         return logs.filter { $0.dateTime >= period.start && $0.dateTime <= period.end }.count
     }
-    
+
     // 获取指定周期的日志
     func getLogs(for period: (start: Date, end: Date)) -> [CounterLog] {
         return logs.filter { $0.dateTime >= period.start && $0.dateTime <= period.end }.sorted(by: { $0.dateTime < $1.dateTime })
@@ -391,7 +574,7 @@ final class Counter {
 @Model
 final class CounterLog {
     var dateTime: Date
-    
+
     init(_ dateTime: Date) {
         self.dateTime = dateTime
     }

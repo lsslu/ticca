@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import SwiftData
 import UserNotifications
 import CoreLocation
 
@@ -24,12 +25,31 @@ struct MonitoredRegionInfo: Identifiable {
 }
 
 struct DebugView: View {
+    @Query private var counters: [Counter]
     @State private var showingDelayPicker = false
     @State private var delaySeconds: String = "5"
     @State private var permissionStatus: String = "检查中..."
     @State private var lastResult: String?
     @State private var pendingNotifications: [PendingNotificationInfo] = []
     @State private var monitoredRegions: [MonitoredRegionInfo] = []
+
+    private struct ConditionRow: Identifiable {
+        let id: String  // conditionId
+        let counterName: String
+        let counter: Counter
+        let condition: TriggerCondition
+    }
+
+    private var allConditions: [ConditionRow] {
+        var rows: [ConditionRow] = []
+        for counter in counters {
+            guard let config = counter.reminderConfig else { continue }
+            for cond in config.triggerConditions where cond.isEnabled {
+                rows.append(ConditionRow(id: cond.id, counterName: counter.name, counter: counter, condition: cond))
+            }
+        }
+        return rows
+    }
 
     var body: some View {
         Form {
@@ -71,6 +91,61 @@ struct DebugView: View {
                         Image(systemName: "timer")
                             .foregroundColor(.orange)
                         Text("延迟触发提醒")
+                    }
+                }
+            }
+
+            Section("触发条件仿真（\(allConditions.count)）") {
+                if allConditions.isEmpty {
+                    Text("暂无启用的触发条件")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(allConditions) { row in
+                        VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.counterName)
+                                    .font(.system(size: 14, weight: .medium))
+                                Text(row.condition.summary)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            HStack(spacing: 12) {
+                                Button {
+                                    Task { await simulateRegionEntry(row) }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "location.fill")
+                                        Text("模拟围栏进入")
+                                            .font(.caption)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.1))
+                                    .foregroundColor(.green)
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!row.condition.hasLocationConstraint)
+
+                                Button {
+                                    Task { await simulateTimeTick(row) }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "clock.fill")
+                                        Text("模拟时间到达")
+                                            .font(.caption)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.orange.opacity(0.1))
+                                    .foregroundColor(.orange)
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!row.condition.hasTimeConstraint)
+                            }
+                        }
+                        .padding(.vertical, 2)
                     }
                 }
             }
@@ -221,6 +296,28 @@ struct DebugView: View {
         }
     }
 
+    private func simulateRegionEntry(_ row: ConditionRow) async {
+        await TriggerEvaluator.shared.evaluate(row.condition, counter: row.counter, source: .regionEntry)
+        await loadDebugInfo()
+        lastResult = "已模拟「\(row.counterName)」围栏进入"
+    }
+
+    private func simulateTimeTick(_ row: ConditionRow) async {
+        let result = await TriggerEvaluator.shared.evaluateOnTimeTick(
+            conditionId: row.condition.id,
+            regionId: row.condition.regionId ?? "",
+            needsLocationCheck: row.condition.needsLocationCheck
+        )
+        let resultText: String
+        switch result {
+        case .show: resultText = "通知应展示"
+        case .suppress: resultText = "通知已抑制"
+        case .timeout: resultText = "位置查询超时（降级路径）"
+        }
+        await loadDebugInfo()
+        lastResult = "模拟「\(row.counterName)」时间到达 → \(resultText)"
+    }
+
     private func triggerImmediately() {
         Task {
             let settings = await UNUserNotificationCenter.current().notificationSettings()
@@ -261,19 +358,23 @@ struct DebugView: View {
             )
         }
 
-        // 查询监控中的地理围栏
+        // 查询监控中的地理围栏：通过 conditionId 反查 Counter
         let locationService = LocationService.shared
-        let metadata = locationService.geofenceMetadata
         monitoredRegions = locationService.locationManager.monitoredRegions.compactMap { region in
             guard let circle = region as? CLCircularRegion else { return nil }
-            let meta = metadata[circle.identifier]
+            let conditionId = LocationService.conditionId(fromRegionId: circle.identifier) ?? ""
+            let info = TriggerEvaluator.shared.findCondition(conditionId: conditionId)
+            let counterName = info?.counter.name ?? "未知"
+            let cond = info?.condition
+            let isPaired = cond.map { $0.combinator == .and && $0.hasTimeConstraint && $0.hasLocationConstraint } ?? false
+            let activeCount = cond?.pendingNotificationIds.count ?? 0
             return MonitoredRegionInfo(
                 id: circle.identifier,
                 center: circle.center,
                 radius: circle.radius,
-                counterName: meta?.counterName ?? "未知",
-                isPaired: meta?.isPaired ?? false,
-                activeNotificationCount: meta?.activeNotificationIds.count ?? 0
+                counterName: counterName,
+                isPaired: isPaired,
+                activeNotificationCount: activeCount
             )
         }
     }

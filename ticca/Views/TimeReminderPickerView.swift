@@ -8,10 +8,24 @@ import SwiftUI
 struct TimeReminderPickerView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedTime = Date()
-    @State private var selectedFrequency: ReminderFrequency = .daily
+    @State private var selectedTime: Date
+    @State private var selectedFrequency: ReminderFrequency
 
     let onSave: (TimeReminder) -> Void
+
+    init(editing: TimeReminder? = nil, onSave: @escaping (TimeReminder) -> Void) {
+        self.onSave = onSave
+        if let e = editing {
+            var comps = DateComponents()
+            comps.hour = e.hour
+            comps.minute = e.minute
+            _selectedTime = State(initialValue: Calendar.current.date(from: comps) ?? Date())
+            _selectedFrequency = State(initialValue: e.frequency)
+        } else {
+            _selectedTime = State(initialValue: Date())
+            _selectedFrequency = State(initialValue: .daily)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,7 +46,7 @@ struct TimeReminderPickerView: View {
                     .pickerStyle(.segmented)
                 }
             }
-            .navigationTitle("添加时间提醒")
+            .navigationTitle("时间")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {

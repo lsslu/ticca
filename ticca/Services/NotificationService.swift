@@ -36,33 +36,39 @@ class NotificationService: NSObject, ObservableObject {
         }
     }
 
-    // 调度时间提醒，返回 notificationId
-    func scheduleTimeReminder(
-        counterName: String,
-        reminder: TimeReminder
-    ) async -> String? {
-        guard reminder.isEnabled else { return nil }
+    // MARK: - One-shot Scheduling
 
+    /// 为指定触发条件调度一次性日历通知（用于"下一个时间点"的 tick）
+    /// 返回 notification identifier，失败返回 nil
+    func scheduleOneShot(
+        conditionId: String,
+        counterName: String,
+        regionId: String?,
+        combinator: Combinator,
+        needsLocationCheck: Bool,
+        fireAt: Date,
+        windowAfter: TimeInterval
+    ) async -> String? {
         let content = UNMutableNotificationContent()
-        content.title = "计数提醒"
+        content.title = "提醒"
         content.body = "该为「\(counterName)」记一笔了"
         content.sound = .default
+        content.userInfo = [
+            "kind": "trigger",
+            "conditionId": conditionId,
+            "counterName": counterName,
+            "regionId": regionId ?? "",
+            "combinator": combinator.rawValue,
+            "needsLocationCheck": needsLocationCheck,
+            "scheduledFor": ISO8601DateFormatter().string(from: fireAt),
+            "windowAfter": Int(windowAfter),
+            "schemaV": 2
+        ]
 
-        var dateComponents = DateComponents()
-        dateComponents.hour = reminder.hour
-        dateComponents.minute = reminder.minute
-
-        switch reminder.frequency {
-        case .daily:
-            break  // 仅设置 hour/minute，每天触发
-        case .weekly:
-            dateComponents.weekday = Calendar.current.component(.weekday, from: Date())
-        case .monthly:
-            dateComponents.day = Calendar.current.component(.day, from: Date())
-        }
-
-        let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
-        let identifier = "ticca_\(counterName)_\(reminder.hour)_\(reminder.minute)_\(reminder.frequency.rawValue)"
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fireAt)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+        let identifier = "tc_\(conditionId)_\(Int(fireAt.timeIntervalSince1970))"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
 
         do {
@@ -73,16 +79,38 @@ class NotificationService: NSObject, ObservableObject {
         }
     }
 
-    func cancelNotification(withId id: String) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
+    /// 立即发送一条通知（用于围栏进入触发 / 迟到补提醒 / 降级路径）
+    func fireImmediate(
+        conditionId: String,
+        counterName: String,
+        suffix: String? = nil
+    ) async -> String? {
+        let content = UNMutableNotificationContent()
+        content.title = "提醒"
+        var body = "该为「\(counterName)」记一笔了"
+        if let suffix = suffix { body += suffix }
+        content.body = body
+        content.sound = .default
+        content.userInfo = [
+            "kind": "trigger-immediate",
+            "conditionId": conditionId,
+            "schemaV": 2
+        ]
+        let identifier = "tc_imm_\(conditionId)_\(Int(Date().timeIntervalSince1970))"
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            return identifier
+        } catch {
+            return nil
+        }
     }
 
-    func cancelAllNotifications(for config: ReminderConfig?) {
-        guard let config = config else { return }
-        let ids = config.triggerConditions.compactMap { $0.notificationId }
-        if !ids.isEmpty {
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
-        }
+    // MARK: - Cancellation
+
+    func cancelNotifications(withIds ids: [String]) {
+        guard !ids.isEmpty else { return }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
     }
 
     func cancelAllPendingNotifications() {

@@ -44,13 +44,25 @@ struct LocationReminderPickerView: View {
     @StateObject private var locationService = LocationService.shared
     @StateObject private var searchService = LocationSearchService()
 
-    @State private var locationName: String = ""
+    @State private var locationName: String
     @State private var searchText: String = ""
     @State private var selectedCoordinate: CLLocationCoordinate2D?
+    @State private var radius: Double
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var showPermissionDenied: Bool = false
 
     let onSave: (LocationReminder) -> Void
+
+    init(editing: LocationReminder? = nil, onSave: @escaping (LocationReminder) -> Void) {
+        self.onSave = onSave
+        _locationName = State(initialValue: editing?.locationName ?? "")
+        _radius = State(initialValue: editing?.radius ?? 500)
+        if let e = editing {
+            _selectedCoordinate = State(initialValue: CLLocationCoordinate2D(latitude: e.latitude, longitude: e.longitude))
+        } else {
+            _selectedCoordinate = State(initialValue: nil)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -72,7 +84,7 @@ struct LocationReminderPickerView: View {
                             }
                         }
 
-                        MapCircle(center: coordinate, radius: 1000)
+                        MapCircle(center: coordinate, radius: radius)
                             .foregroundStyle(.blue.opacity(0.1))
                             .stroke(.blue.opacity(0.5), lineWidth: 1)
                     }
@@ -114,13 +126,15 @@ struct LocationReminderPickerView: View {
                         TextField("输入位置名称（可选）", text: $locationName)
                     }
 
-                    Section {
+                    Section("提醒半径") {
                         HStack {
-                            Text("提醒半径")
+                            Text("半径")
                             Spacer()
-                            Text("1000 米")
+                            Text("\(Int(radius)) 米")
                                 .foregroundColor(.secondary)
+                                .font(.system(.body, design: .monospaced))
                         }
+                        Slider(value: $radius, in: 100...5000, step: 50)
                     }
 
                     Section {
@@ -145,7 +159,7 @@ struct LocationReminderPickerView: View {
                     }
                 }
             }
-            .navigationTitle("添加位置提醒")
+            .navigationTitle("位置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -157,7 +171,7 @@ struct LocationReminderPickerView: View {
                         let reminder = LocationReminder(
                             latitude: coordinate.latitude,
                             longitude: coordinate.longitude,
-                            radius: 1000,
+                            radius: radius,
                             locationName: locationName.isEmpty ? nil : locationName,
                             isEnabled: true,
                             regionId: nil

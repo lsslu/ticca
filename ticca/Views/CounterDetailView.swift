@@ -233,17 +233,11 @@ struct ReminderSettingSheet: View {
     @Bindable var counter: Counter
 
     @State private var reminderConfig: ReminderConfig?
-    @State private var showingTimePicker = false
-    @State private var showingLocationPicker = false
 
     var body: some View {
         NavigationStack {
             Form {
-                ReminderConfigView(
-                    reminderConfig: $reminderConfig,
-                    onAddTimeReminder: { showingTimePicker = true },
-                    onAddLocationReminder: { showingLocationPicker = true }
-                )
+                ReminderConfigView(reminderConfig: $reminderConfig)
             }
             .navigationTitle("提醒设置")
             .navigationBarTitleDisplayMode(.inline)
@@ -257,34 +251,10 @@ struct ReminderSettingSheet: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingTimePicker) {
-                TimeReminderPickerView { reminder in
-                    addTimeReminder(reminder)
-                }
-            }
-            .sheet(isPresented: $showingLocationPicker) {
-                LocationReminderPickerView { reminder in
-                    addLocationReminder(reminder)
-                }
-            }
         }
         .onAppear {
             reminderConfig = counter.reminderConfig
         }
-    }
-
-    private func addTimeReminder(_ reminder: TimeReminder) {
-        if reminderConfig == nil {
-            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
-        }
-        reminderConfig?.timeReminders.append(reminder)
-    }
-
-    private func addLocationReminder(_ reminder: LocationReminder) {
-        if reminderConfig == nil {
-            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
-        }
-        reminderConfig?.locationReminders.append(reminder)
     }
 
     private func saveReminders() {

@@ -32,8 +32,6 @@ struct CreateCounterView: View {
     // 提醒配置
     @State private var reminderConfig: ReminderConfig? = nil
     @State private var showingPermissionRequest = false
-    @State private var showingTimePicker = false
-    @State private var showingLocationPicker = false
     
     let iconColumns = [
         GridItem(.flexible()),
@@ -173,11 +171,7 @@ struct CreateCounterView: View {
                     }
                 }
 
-                ReminderConfigView(
-                    reminderConfig: $reminderConfig,
-                    onAddTimeReminder: { showingTimePicker = true },
-                    onAddLocationReminder: { showingLocationPicker = true }
-                )
+                ReminderConfigView(reminderConfig: $reminderConfig)
             }
             .navigationTitle(isEditMode ? "编辑计数器" : "创建计数器")
             .navigationBarTitleDisplayMode(.inline)
@@ -201,33 +195,9 @@ struct CreateCounterView: View {
             .onAppear {
                 loadCounterData()
             }
-            .sheet(isPresented: $showingTimePicker) {
-                TimeReminderPickerView { reminder in
-                    addTimeReminder(reminder)
-                }
-            }
-            .sheet(isPresented: $showingLocationPicker) {
-                LocationReminderPickerView { reminder in
-                    addLocationReminder(reminder)
-                }
-            }
         }
     }
 
-    private func addTimeReminder(_ reminder: TimeReminder) {
-        if reminderConfig == nil {
-            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
-        }
-        reminderConfig?.timeReminders.append(reminder)
-    }
-
-    private func addLocationReminder(_ reminder: LocationReminder) {
-        if reminderConfig == nil {
-            reminderConfig = ReminderConfig(timeReminders: [], locationReminders: [])
-        }
-        reminderConfig?.locationReminders.append(reminder)
-    }
-    
     private func loadCounterData() {
         guard let counter = editingCounter else { return }
         name = counter.name
