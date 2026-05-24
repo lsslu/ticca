@@ -201,20 +201,24 @@ struct ReminderConfig: Codable, Hashable {
     }
 
     init(from decoder: Decoder) throws {
+        // 注意：SwiftData 的 CompositeKeyedDecoding 对不存在的 key 调 decode() 会 trap，
+        // 必须用 decodeIfPresent 才能在旧数据缺失字段时安全返回 nil。
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let times = (try? c.decode([TimeReminder].self, forKey: .timeReminders)) ?? []
-        let locs = (try? c.decode([LocationReminder].self, forKey: .locationReminders)) ?? []
-        let version = (try? c.decode(Int.self, forKey: .v)) ?? 1
+        let times = (try? c.decodeIfPresent([TimeReminder].self, forKey: .timeReminders)) ?? []
+        let locs = (try? c.decodeIfPresent([LocationReminder].self, forKey: .locationReminders)) ?? []
+        let version = (try? c.decodeIfPresent(Int.self, forKey: .v)) ?? 1
 
         self.timeReminders = times
         self.locationReminders = locs
         self.v = 2  // 解码后内存中即升级到 v2，等下次写盘落盘
 
         if version >= 2 {
-            self.triggerConditions = (try? c.decode([TriggerCondition].self, forKey: .triggerConditions)) ?? []
+            let decoded = (try? c.decodeIfPresent([TriggerCondition].self, forKey: .triggerConditions)) ?? nil
+            self.triggerConditions = decoded ?? []
         } else {
             // v1 -> v2 迁移
-            if let legacy = try? c.decode([LegacyTriggerCondition].self, forKey: .triggerConditions) {
+            let legacy = (try? c.decodeIfPresent([LegacyTriggerCondition].self, forKey: .triggerConditions)) ?? nil
+            if let legacy = legacy {
                 self.triggerConditions = Self.migrateLegacy(legacy, times: times, locations: locs)
             } else {
                 // 损坏数据：失败即重置
